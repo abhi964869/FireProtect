@@ -155,6 +155,82 @@ def test_dashboard_has_a_visible_failure_mode():
 
 
 # --------------------------------------------------------------------------
+# Timestamps — every one must carry an explicit UTC offset
+# --------------------------------------------------------------------------
+#
+# Regression for a live bug: SQLite ignores `DateTime(timezone=True)`, so
+# timestamps came back naive and serialised without an offset. JavaScript
+# parses an offsetless date-time as LOCAL time, so a device that reported two
+# seconds ago rendered as "seen 6h ago" for a reader in IST, and the telemetry
+# charts were plotted against an axis wrong by the reader's UTC offset.
+
+
+def _offset_bearing(value: str) -> bool:
+    """True if an ISO-8601 string states its timezone."""
+    return value.endswith("Z") or re.search(r"[+-]\d{2}:\d{2}$", value) is not None
+
+
+def test_device_timestamps_carry_an_offset(client, sample_telemetry):
+    client.post("/api/telemetry", json=sample_telemetry)
+    device = client.get("/api/devices").json()[0]
+    for field in ("first_seen", "last_seen"):
+        assert _offset_bearing(device[field]), (
+            f"{field}={device[field]!r} has no timezone; browsers will read it "
+            f"as local time and show it shifted by the viewer's UTC offset"
+        )
+
+
+def test_reading_timestamps_carry_an_offset(client, sample_telemetry):
+    client.post("/api/telemetry", json=sample_telemetry)
+    reading = client.get("/api/readings").json()[0]
+    assert _offset_bearing(reading["recorded_at"])
+
+
+def test_alert_timestamps_carry_an_offset(client, fire_telemetry):
+    for _ in range(4):
+        client.post("/api/telemetry", json=fire_telemetry)
+    alerts = client.get("/api/alerts").json()
+    assert alerts, "expected a FIRE alert from repeated fire telemetry"
+    assert _offset_bearing(alerts[0]["triggered_at"])
+
+
+def test_websocket_payload_matches_the_rest_representation(client, sample_telemetry):
+    """The socket builds dicts by hand and never touches Pydantic.
+
+    If it emitted naive timestamps while REST emitted aware ones, a live chart
+    would jump by the viewer's UTC offset the instant an update arrived.
+    """
+    from app.db import Device, Reading, session_scope
+    from app.ingest import _device_to_dict, _reading_to_dict
+
+    client.post("/api/telemetry", json=sample_telemetry)
+    with session_scope() as session:
+        reading = session.query(Reading).first()
+        device = session.query(Device).first()
+        assert reading is not None and device is not None
+        assert _offset_bearing(_reading_to_dict(reading)["recorded_at"])
+        assert _offset_bearing(_device_to_dict(device)["last_seen"])
+
+
+def test_a_fresh_reading_is_not_reported_as_hours_old(client, sample_telemetry):
+    """The user-visible symptom, asserted directly.
+
+    Parsing the serialised timestamp the way a browser does must place it
+    within seconds of now — not the viewer's UTC offset into the past.
+    """
+    from datetime import datetime, timezone
+
+    client.post("/api/telemetry", json=sample_telemetry)
+    last_seen = client.get("/api/devices").json()[0]["last_seen"]
+    # `fromisoformat` only learned to accept a trailing "Z" in Python 3.11.
+    # Browsers have always accepted it, so the wire format is right; this is
+    # purely so the test runs on 3.10 as well.
+    parsed = datetime.fromisoformat(last_seen.replace("Z", "+00:00"))
+    age_s = abs((datetime.now(timezone.utc) - parsed).total_seconds())
+    assert age_s < 60, f"a just-created device appears {age_s / 3600:.1f} hours old"
+
+
+# --------------------------------------------------------------------------
 # Container contents — what the Dockerfile must ship for the app to work
 # --------------------------------------------------------------------------
 

@@ -311,6 +311,73 @@ def test_camera_temperature_stays_null_when_not_shared(client: TestClient) -> No
     assert body["humidity_pct"] is None
 
 
+def test_outdoor_air_quality_is_stored_when_supplied(client: TestClient) -> None:
+    """Real PM2.5/AQI from a monitoring station, kept in their own columns."""
+    body = _post_frame(
+        client,
+        temperature_c=31.4,
+        humidity_pct=62.0,
+        pm2_5_ugm3=48.2,
+        pm10_ugm3=96.5,
+        us_aqi=132.0,
+    )
+    assert body["pm2_5_ugm3"] == 48.2
+    assert body["pm10_ugm3"] == 96.5
+    assert body["us_aqi"] == 132.0
+    assert body["humidity_pct"] == 62.0
+
+
+def test_outdoor_air_never_leaks_into_the_gas_channels(client: TestClient) -> None:
+    """The whole point of separate columns.
+
+    PM2.5 is a real particulate measurement from outdoors. smoke_ppm is what an
+    MQ-2 smells in the room. Folding one into the other would present a city's
+    air quality as a reading from a sensor that does not exist.
+    """
+    body = _post_frame(client, pm2_5_ugm3=480.0, us_aqi=400.0)
+    assert body["smoke_ppm"] is None
+    assert body["air_quality_ppm"] is None
+    assert body["pm2_5_ugm3"] == 480.0
+
+
+def test_air_quality_stays_null_when_location_not_shared(client: TestClient) -> None:
+    body = _post_frame(client)
+    assert body["pm2_5_ugm3"] is None
+    assert body["pm10_ugm3"] is None
+    assert body["us_aqi"] is None
+
+
+def test_air_quality_does_not_affect_the_fire_verdict(client: TestClient) -> None:
+    """Hazardous outdoor air is not a fire in this room.
+
+    Delhi in winter routinely exceeds AQI 400. If that raised a fire alarm the
+    product would be unusable there, and wrongly so.
+    """
+    for _ in range(6):
+        body = _post_frame(client, pm2_5_ugm3=900.0, us_aqi=500.0)
+    assert body["server_status"] == "SAFE"
+    assert client.get("/api/alerts").json() == []
+
+
+def test_rejects_impossible_air_quality_values(client: TestClient) -> None:
+    for field, value in (
+        ("pm2_5_ugm3", -1.0),
+        ("pm2_5_ugm3", 99_999.0),
+        ("us_aqi", 5000.0),
+    ):
+        response = client.post(
+            "/api/camera/telemetry",
+            json={
+                "device_id": "cam-test-01",
+                "flame_ratio": 0.0,
+                "luminance": 0.4,
+                "haze_index": 0.2,
+                field: value,
+            },
+        )
+        assert response.status_code == 422, f"{field}={value} should be rejected"
+
+
 def test_camera_rejects_out_of_range_metrics(client: TestClient) -> None:
     response = client.post(
         "/api/camera/telemetry",
