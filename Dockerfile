@@ -7,18 +7,17 @@
 # managed broker (HiveMQ Cloud has a free tier) with MQTT_HOST/MQTT_PORT, or
 # leave it unset and POST to /api/telemetry over HTTPS.
 #
+# The dashboard is NOT compiled here. `frontend/dist` is committed to the
+# repository (see .gitignore), so the image copies the build that was already
+# produced and tested locally. That removes Node, npm and the whole TypeScript
+# toolchain from the deploy path: the build is faster, reproducible, and cannot
+# fail on a toolchain difference between a laptop and the build host. Rebuild
+# with `cd frontend && npm run build` and commit the result when the UI changes;
+# `run_local.py` checks mtimes and rebuilds automatically, so it cannot go
+# stale unnoticed.
+#
 # For the full local stack including Mosquitto, use docker-compose.yml instead.
 
-# --- Stage 1: build the dashboard -------------------------------------------
-FROM node:20-alpine AS frontend
-
-WORKDIR /build
-COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm ci --no-audit --no-fund 2>/dev/null || npm install --no-audit --no-fund
-COPY frontend/ ./
-RUN npm run build
-
-# --- Stage 2: runtime --------------------------------------------------------
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
@@ -32,7 +31,11 @@ RUN pip install --no-cache-dir -r backend/requirements.txt
 
 COPY backend/app ./backend/app
 COPY ml/random_forest.joblib ml/decision_tree.joblib ml/feature_columns.json ./ml/
-COPY --from=frontend /build/dist ./frontend/dist
+COPY frontend/dist ./frontend/dist
+
+# Demo mode imports the simulator's physics rather than duplicating it, so the
+# module has to be in the image. It is small and has no dependencies.
+COPY simulator/virtual_device.py ./simulator/virtual_device.py
 
 # Data lives on a mounted volume where the platform provides one; otherwise it
 # is ephemeral and resets on redeploy, which is fine for a demo.
