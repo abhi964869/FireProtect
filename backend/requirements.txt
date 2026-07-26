@@ -9,6 +9,16 @@ SQLAlchemy>=2.0,<3.0
 paho-mqtt>=2.0,<3.0
 httpx>=0.27,<1.0
 
+# Postgres driver, for pointing DATABASE_URL at Supabase. psycopg 3 (not
+# psycopg2): the binary wheel needs no libpq or compiler on the build host.
+# Unused on the SQLite default, and small enough not to be worth making
+# optional.
+psycopg[binary]>=3.1,<4.0
+
+# Accounts. bcrypt for password hashing, PyJWT for session tokens.
+bcrypt>=4.1,<5.0
+PyJWT>=2.8,<3.0
+
 # Inference. scikit-learn must match the version the model was trained with;
 # joblib artefacts are not guaranteed portable across minor versions.
 scikit-learn>=1.5,<2.0

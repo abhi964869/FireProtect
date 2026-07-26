@@ -10,6 +10,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 FireStatus = Literal["SAFE", "WARNING", "FIRE"]
 
+#: A camera node and an ESP32 node measure different physical quantities and
+#: are classified by different models. Every reading carries its kind so no
+#: consumer can read one as the other.
+SensorKind = Literal["hardware", "camera"]
+
 #: Physically possible envelopes. Anything outside these is a sensor fault, not
 #: a fire, and is rejected at ingest rather than being fed to the model.
 TEMPERATURE_RANGE = (-40.0, 300.0)
@@ -103,21 +108,88 @@ class TelemetryIn(BaseModel):
         return value
 
 
+class CameraTelemetryIn(BaseModel):
+    """One analysed video frame from a browser camera node.
+
+    Every metric is dimensionless and in [0, 1]; the browser does the pixel
+    work and sends conclusions, not frames. No image data ever leaves the
+    device — that is a privacy property, not an optimisation, and it is why
+    this is three floats rather than a video upload.
+
+    ``flicker`` is deliberately NOT accepted from the client. It is derived
+    server-side from the history of ``flame_ratio`` (see ``app.camera``), so a
+    client cannot claim a convincing flicker score for a static image.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    device_id: Annotated[str, Field(min_length=1, max_length=64)]
+    flame_ratio: Annotated[float, Field(ge=0.0, le=1.0)]
+    luminance: Annotated[float, Field(ge=0.0, le=1.0)]
+    haze_index: Annotated[float, Field(ge=0.0, le=1.0)]
+
+    #: Genuine ambient conditions from the visitor's location, when they allow
+    #: it. Optional and nullable: absent means "unknown", never "zero".
+    temperature_c: float | None = None
+    humidity_pct: float | None = None
+    location: str = ""
+
+    @field_validator("flame_ratio", "luminance", "haze_index")
+    @classmethod
+    def _finite_metric(cls, value: float, info: object) -> float:
+        name = getattr(info, "field_name", "value")
+        return _reject_non_finite(value, str(name))
+
+    @field_validator("temperature_c")
+    @classmethod
+    def _optional_temp(cls, value: float | None) -> float | None:
+        if value is None:
+            return None
+        _reject_non_finite(value, "temperature_c")
+        low, high = TEMPERATURE_RANGE
+        if not low <= value <= high:
+            raise ValueError(f"temperature_c {value} outside [{low}, {high}]")
+        return value
+
+    @field_validator("humidity_pct")
+    @classmethod
+    def _optional_humidity(cls, value: float | None) -> float | None:
+        if value is None:
+            return None
+        _reject_non_finite(value, "humidity_pct")
+        low, high = HUMIDITY_RANGE
+        if not low <= value <= high:
+            raise ValueError(f"humidity_pct {value} outside [{low}, {high}]")
+        return value
+
+
 class ReadingOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     device_id: str
     recorded_at: datetime
-    temperature_c: float
-    humidity_pct: float
-    smoke_ppm: float
-    air_quality_ppm: float
-    flame_analog_volts: float
-    flame_detected: int
-    temp_rate_c_per_min: float
-    smoke_rate_ppm_per_min: float
-    heat_index_c: float
+    #: Which sensor family produced this row. Consumers must branch on it
+    #: before interpreting any channel below.
+    sensor_kind: SensorKind = "hardware"
+
+    # Gas / thermal. None on a camera node, which cannot measure them.
+    temperature_c: float | None = None
+    humidity_pct: float | None = None
+    smoke_ppm: float | None = None
+    air_quality_ppm: float | None = None
+    flame_analog_volts: float | None = None
+    flame_detected: int = 0
+
+    # Camera. None on a hardware node.
+    flame_ratio: float | None = None
+    luminance: float | None = None
+    haze_index: float | None = None
+    flicker: float | None = None
+
+    temp_rate_c_per_min: float = 0.0
+    smoke_rate_ppm_per_min: float = 0.0
+    heat_index_c: float = 0.0
     device_status: FireStatus
     server_status: FireStatus
     fire_probability: float
@@ -130,6 +202,7 @@ class DeviceOut(BaseModel):
     id: str
     name: str
     location: str
+    kind: SensorKind = "hardware"
     firmware_version: str
     first_seen: datetime
     last_seen: datetime
@@ -188,6 +261,108 @@ class ThresholdBulkUpdate(BaseModel):
             if item < 0:
                 raise ValueError(f"{key} must be non-negative")
         return value
+
+
+# ---------------------------------------------------------------------------
+# Accounts
+# ---------------------------------------------------------------------------
+
+
+class RegisterRequest(BaseModel):
+    email: Annotated[str, Field(min_length=3, max_length=320)]
+    #: 8 is the floor, not a recommendation. Length beats complexity rules,
+    #: which mostly teach people to end passwords with "1!".
+    password: Annotated[str, Field(min_length=8, max_length=128)]
+    display_name: Annotated[str, Field(max_length=128)] = ""
+
+    @field_validator("email")
+    @classmethod
+    def _email_shape(cls, value: str) -> str:
+        email = value.strip().lower()
+        # Not a full RFC 5322 validator on purpose: those reject valid
+        # addresses and accept invalid ones. Deliverability is proven by mail
+        # arriving, not by a regex.
+        local, _, domain = email.partition("@")
+        if not local or not domain or "." not in domain or " " in email:
+            raise ValueError("enter a valid email address")
+        return email
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email: str
+    display_name: str
+    created_at: datetime
+    emergency_email: str
+    emergency_name: str
+    temperature_limit_c: float
+    notifications_enabled: bool
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: Literal["bearer"] = "bearer"
+    expires_in: int
+    user: UserOut
+
+
+class EmergencyContactUpdate(BaseModel):
+    """Partial update. Unset fields are left alone."""
+
+    emergency_email: Annotated[str, Field(max_length=320)] | None = None
+    emergency_name: Annotated[str, Field(max_length=128)] | None = None
+    #: Bounded to what a room can plausibly reach. Below 30 C the alarm would
+    #: fire on a warm afternoon; above 150 C the sensor is already destroyed
+    #: and waiting for it would mean never alerting at all.
+    temperature_limit_c: Annotated[float, Field(ge=30.0, le=150.0)] | None = None
+    notifications_enabled: bool | None = None
+
+    @field_validator("emergency_email")
+    @classmethod
+    def _contact_email(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        email = value.strip().lower()
+        if not email:
+            return ""  # explicit clear: notifications off
+        local, _, domain = email.partition("@")
+        if not local or not domain or "." not in domain or " " in email:
+            raise ValueError("enter a valid email address")
+        return email
+
+
+class TemperatureEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    device_id: str
+    started_at: datetime
+    ended_at: datetime | None
+    trigger_temperature_c: float
+    peak_temperature_c: float
+    threshold_c: float
+    sensor_kind: SensorKind
+    notified: bool
+    notify_error: str
+
+
+class ClaimDeviceRequest(BaseModel):
+    device_id: Annotated[str, Field(min_length=1, max_length=64)]
+
+
+class NotificationStatusOut(BaseModel):
+    """So the settings page can say whether email would actually work."""
+
+    transport: Literal["resend", "smtp", "none"]
+    configured: bool
+    contact_set: bool
 
 
 class StatsOut(BaseModel):

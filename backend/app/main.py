@@ -10,8 +10,18 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Any, cast
 
-from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import (
+    Depends,
+    FastAPI,
+    HTTPException,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import delete, func, select
 from sqlalchemy.engine import CursorResult
@@ -20,31 +30,66 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 from starlette.types import Scope
 
+from app.auth import (
+    CurrentUser,
+    create_token,
+    find_user_by_email,
+    hash_password,
+    normalise_email,
+    verify_password,
+)
 from app.config import get_settings
-from app.db import Alert, Device, Reading, Threshold, get_db, init_db, utcnow
+from app.db import (
+    Alert,
+    Device,
+    Reading,
+    TemperatureEvent,
+    Threshold,
+    User,
+    get_db,
+    init_db,
+    utcnow,
+)
 from app.demo import DemoDriver
 from app.inference import compute_risk_score, get_classifier
 from app.ingest import get_ingest_service
 from app.mqtt_client import get_subscriber
+from app.notify import get_notifier
 from app.schemas import (
     AlertOut,
+    CameraTelemetryIn,
+    ClaimDeviceRequest,
     DeviceDetail,
     DeviceOut,
+    EmergencyContactUpdate,
     HealthOut,
+    LoginRequest,
+    NotificationStatusOut,
     PredictRequest,
     PredictResponse,
     ReadingOut,
+    RegisterRequest,
     StatsOut,
     TelemetryIn,
+    TemperatureEventOut,
     ThresholdBulkUpdate,
     ThresholdOut,
+    TokenResponse,
+    UserOut,
 )
 from app.thingspeak import get_mirror
 from app.ws import hub
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
+
+#: A valid bcrypt digest of a value nobody can supply. Login verifies against
+#: this when the address is unknown, so the endpoint burns the same ~100 ms
+#: either way and cannot be timed to enumerate accounts.
+_DUMMY_HASH = (
+    "$2b$12$C6UzMDM.H6dfI/f/IKcEe.EPRQhkQGeNVWMEbLBDwSCPuXVBiZ.Wm"
+)
 
 #: How often the background task sweeps for devices that stopped reporting.
 OFFLINE_SWEEP_INTERVAL_S = 10.0
@@ -111,6 +156,30 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(
+    _request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    """Return a clean 422 even when the rejected value cannot be JSON-encoded.
+
+    FastAPI's default handler echoes the offending input back in the error
+    body. That is helpful right up until the input is NaN or Infinity, which
+    ``json.dumps`` refuses to serialise — at which point a *malformed request*
+    turns into a 500 from inside the error handler itself. A device sending a
+    failed DHT22 read as NaN is exactly the case this project has to survive,
+    so the inputs are stripped and the field paths kept.
+    """
+    errors = [
+        {
+            "loc": error.get("loc", ()),
+            "msg": error.get("msg", "invalid value"),
+            "type": error.get("type", "value_error"),
+        }
+        for error in exc.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": errors})
+
 
 DbSession = Annotated[Session, Depends(get_db)]
 
@@ -191,6 +260,154 @@ def stats(session: DbSession) -> StatsOut:
         current_status=current,  # type: ignore[arg-type]
         max_fire_probability=round(max_probability, 4),
     )
+
+
+# ---------------------------------------------------------------------------
+# Accounts
+# ---------------------------------------------------------------------------
+
+
+@app.post(
+    "/api/auth/register",
+    response_model=TokenResponse,
+    status_code=201,
+    tags=["auth"],
+)
+def register(payload: RegisterRequest, session: DbSession) -> TokenResponse:
+    if not get_settings().allow_registration:
+        raise HTTPException(
+            status_code=403, detail="Registration is closed on this instance."
+        )
+    if find_user_by_email(session, payload.email) is not None:
+        # Registration genuinely cannot hide account existence — the address is
+        # either free or it is not. Login is where the oracle would matter, and
+        # that endpoint gives nothing away.
+        raise HTTPException(
+            status_code=409, detail="An account with that email already exists."
+        )
+    try:
+        password_hash = hash_password(payload.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    user = User(
+        email=normalise_email(payload.email),
+        password_hash=password_hash,
+        display_name=payload.display_name.strip(),
+    )
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+
+    token, expires_in = create_token(user.id)
+    return TokenResponse(
+        access_token=token,
+        expires_in=expires_in,
+        user=UserOut.model_validate(user),
+    )
+
+
+@app.post("/api/auth/login", response_model=TokenResponse, tags=["auth"])
+def login(payload: LoginRequest, session: DbSession) -> TokenResponse:
+    user = find_user_by_email(session, payload.email)
+    # Identical response and identical work for "no such user" and "wrong
+    # password". Returning early on an unknown address would also leak account
+    # existence through response timing, so the hash is verified either way.
+    reference = user.password_hash if user is not None else _DUMMY_HASH
+    password_ok = verify_password(payload.password, reference)
+    if user is None or not password_ok:
+        raise HTTPException(status_code=401, detail="Incorrect email or password.")
+
+    token, expires_in = create_token(user.id)
+    return TokenResponse(
+        access_token=token,
+        expires_in=expires_in,
+        user=UserOut.model_validate(user),
+    )
+
+
+@app.get("/api/auth/me", response_model=UserOut, tags=["auth"])
+def current_user(user: CurrentUser) -> User:
+    return user
+
+
+@app.put("/api/auth/emergency-contact", response_model=UserOut, tags=["auth"])
+def update_emergency_contact(
+    payload: EmergencyContactUpdate, user: CurrentUser, session: DbSession
+) -> User:
+    """Set who gets emailed, and at what temperature."""
+    data = payload.model_dump(exclude_unset=True)
+    for field, value in data.items():
+        if value is not None or field == "emergency_email":
+            setattr(user, field, value if value is not None else "")
+    session.commit()
+    session.refresh(user)
+    return user
+
+
+@app.get(
+    "/api/auth/notification-status",
+    response_model=NotificationStatusOut,
+    tags=["auth"],
+)
+def notification_status(user: CurrentUser) -> NotificationStatusOut:
+    """Whether an emergency email would actually be delivered right now.
+
+    A settings page that accepts an address and says nothing else lets someone
+    believe they are protected when the server has no mail transport at all.
+    """
+    notifier = get_notifier()
+    return NotificationStatusOut(
+        transport=notifier.transport,  # type: ignore[arg-type]
+        configured=notifier.configured,
+        contact_set=bool(user.emergency_email) and user.notifications_enabled,
+    )
+
+
+@app.get(
+    "/api/temperature-events",
+    response_model=list[TemperatureEventOut],
+    tags=["history"],
+)
+def temperature_events(
+    user: CurrentUser,
+    session: DbSession,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> list[TemperatureEvent]:
+    """Every high-temperature excursion recorded for this account."""
+    return list(
+        session.scalars(
+            select(TemperatureEvent)
+            .where(TemperatureEvent.user_id == user.id)
+            .order_by(TemperatureEvent.started_at.desc())
+            .limit(limit)
+        ).all()
+    )
+
+
+@app.post("/api/devices/claim", response_model=DeviceOut, tags=["devices"])
+def claim_device(
+    payload: ClaimDeviceRequest, user: CurrentUser, session: DbSession
+) -> Device:
+    """Take ownership of a node, so its emergencies reach your contact.
+
+    First claim wins. Re-claiming something another account already owns is
+    refused rather than silently transferred: quietly redirecting someone
+    else's fire alarm to your inbox is exactly the attack this prevents.
+    """
+    device = session.get(Device, payload.device_id)
+    if device is None:
+        raise HTTPException(
+            status_code=404, detail=f"device {payload.device_id!r} not found"
+        )
+    if device.owner_id is not None and device.owner_id != user.id:
+        raise HTTPException(
+            status_code=409, detail="That device is already claimed by another account."
+        )
+    device.owner_id = user.id
+    session.commit()
+    session.refresh(device)
+    return device
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +499,23 @@ def ingest_telemetry(payload: TelemetryIn, session: DbSession) -> Any:
     Exists so the pipeline can be exercised (and tested) without a broker.
     """
     result = get_ingest_service().process_telemetry(payload, session)
+    session.commit()
+    return result
+
+
+@app.post("/api/camera/telemetry", response_model=ReadingOut, tags=["readings"])
+def ingest_camera_telemetry(payload: CameraTelemetryIn, session: DbSession) -> Any:
+    """Ingest one analysed frame from a browser camera node.
+
+    Separate from ``/api/telemetry`` rather than a flag on it, because the two
+    carry disjoint measurements and are scored by different models. One
+    endpoint accepting either shape would need a discriminated union whose only
+    purpose is to be immediately split apart again.
+
+    The client sends three floats derived from the video on-device; no image
+    data is transmitted or stored.
+    """
+    result = get_ingest_service().process_camera_telemetry(payload, session)
     session.commit()
     return result
 

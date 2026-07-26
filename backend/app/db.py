@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -16,7 +17,9 @@ from sqlalchemy import (
     String,
     create_engine,
     event,
+    text,
 )
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -30,6 +33,8 @@ from sqlalchemy.pool import StaticPool
 
 from app.config import get_settings
 
+logger = logging.getLogger(__name__)
+
 
 def utcnow() -> datetime:
     """Timezone-aware UTC now. Never use naive datetimes in this codebase."""
@@ -40,14 +45,30 @@ class Base(DeclarativeBase):
     pass
 
 
+#: What kind of sensor a device is. This is not cosmetic: a camera node
+#: measures completely different physical quantities from an ESP32 gas node,
+#: is classified by a different model, and must never have its numbers read as
+#: though they came from an MQ-2. The kind travels with every reading so the
+#: distinction survives all the way to the dashboard.
+SENSOR_KINDS = ("hardware", "camera")
+
+
 class Device(Base):
-    """A physical or simulated ESP32 node."""
+    """A sensor node: an ESP32 (or simulator), or a browser camera."""
 
     __tablename__ = "devices"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(String(128), default="")
     location: Mapped[str] = mapped_column(String(128), default="")
+    kind: Mapped[str] = mapped_column(String(16), default="hardware", index=True)
+    #: Which account this node belongs to. NULL for anything that reported
+    #: before anyone claimed it — an unregistered ESP32, the demo device. An
+    #: unowned node alarms on the dashboard but mails nobody, because there is
+    #: nobody it could correctly be said to belong to.
+    owner_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     firmware_version: Mapped[str] = mapped_column(String(32), default="")
     first_seen: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow
@@ -63,6 +84,7 @@ class Device(Base):
     alerts: Mapped[list[Alert]] = relationship(
         back_populates="device", cascade="all, delete-orphan"
     )
+    owner: Mapped[User | None] = relationship(back_populates="devices")
 
 
 class Reading(Base):
@@ -78,12 +100,31 @@ class Reading(Base):
         DateTime(timezone=True), default=utcnow, index=True
     )
 
-    temperature_c: Mapped[float] = mapped_column(Float)
-    humidity_pct: Mapped[float] = mapped_column(Float)
-    smoke_ppm: Mapped[float] = mapped_column(Float)
-    air_quality_ppm: Mapped[float] = mapped_column(Float)
-    flame_analog_volts: Mapped[float] = mapped_column(Float)
-    flame_detected: Mapped[int] = mapped_column(Integer)
+    #: Which sensor family produced this row. Copied from the device rather
+    #: than joined at read time so a reading is self-describing: exports, the
+    #: WebSocket feed and the CSV dump all carry it without a join.
+    sensor_kind: Mapped[str] = mapped_column(String(16), default="hardware")
+
+    # --- gas / thermal channels (ESP32 hardware) ---------------------------
+    # Nullable because a camera node genuinely does not measure these. Writing
+    # 0.0 instead would render as "0 ppm — clean air" on the dashboard, which
+    # is a confident false statement about a sensor that does not exist. NULL
+    # renders as "not measured", which is true.
+    temperature_c: Mapped[float | None] = mapped_column(Float, nullable=True)
+    humidity_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    smoke_ppm: Mapped[float | None] = mapped_column(Float, nullable=True)
+    air_quality_ppm: Mapped[float | None] = mapped_column(Float, nullable=True)
+    flame_analog_volts: Mapped[float | None] = mapped_column(Float, nullable=True)
+    flame_detected: Mapped[int] = mapped_column(Integer, default=0)
+
+    # --- camera channels ---------------------------------------------------
+    # NULL on hardware rows and NULL on camera rows for the gas columns above.
+    # Nullable rather than zero-filled is the whole point: 0.0 ppm reads as
+    # "clean air", which would be a lie about a sensor that cannot smell.
+    flame_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+    luminance: Mapped[float | None] = mapped_column(Float, nullable=True)
+    haze_index: Mapped[float | None] = mapped_column(Float, nullable=True)
+    flicker: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     temp_rate_c_per_min: Mapped[float] = mapped_column(Float, default=0.0)
     smoke_rate_ppm_per_min: Mapped[float] = mapped_column(Float, default=0.0)
@@ -128,6 +169,83 @@ class Alert(Base):
     fire_probability: Mapped[float] = mapped_column(Float, default=0.0)
 
     device: Mapped[Device] = relationship(back_populates="alerts")
+
+
+class User(Base):
+    """An account. Owns devices, an emergency contact and a history.
+
+    Passwords are never stored. ``password_hash`` is a bcrypt digest, which is
+    deliberately slow to compute: if this table ever leaks, an attacker gets
+    weeks of GPU time per password instead of a rainbow-table lookup.
+    """
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    #: Stored lower-cased; login is case-insensitive because nobody remembers
+    #: whether they signed up with a capital letter.
+    email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    display_name: Mapped[str] = mapped_column(String(128), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    # --- emergency contact ------------------------------------------------
+    #: Where the emergency mail goes. Empty means notifications are off, which
+    #: is the safe default: silently mailing a stranger would be worse than
+    #: sending nothing.
+    emergency_email: Mapped[str] = mapped_column(String(320), default="")
+    emergency_name: Mapped[str] = mapped_column(String(128), default="")
+    #: Temperature that counts as an emergency for this account, in Celsius.
+    #: 55 C is above any normal indoor condition (a hot attic peaks near 50)
+    #: but well below flashover, so it fires early enough to matter.
+    temperature_limit_c: Mapped[float] = mapped_column(Float, default=55.0)
+    #: Master switch, so a contact can be kept on file while muted.
+    notifications_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    #: Guards against an alert storm mailing the same person every 2 seconds.
+    last_notified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    devices: Mapped[list[Device]] = relationship(back_populates="owner")
+    events: Mapped[list[TemperatureEvent]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class TemperatureEvent(Base):
+    """A recorded high-temperature excursion.
+
+    Separate from ``readings`` on purpose. Readings are high-volume and pruned
+    on a retention schedule; these are the handful of moments that actually
+    mattered, and they are kept indefinitely so the history a user opens next
+    year is still there.
+    """
+
+    __tablename__ = "temperature_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    #: NULL when the device that produced it is unclaimed. The excursion is
+    #: still worth recording — it is evidence something got hot — it just has
+    #: no account to appear under.
+    user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    device_id: Mapped[str] = mapped_column(String(64), index=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+    ended_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: Temperature that opened the excursion, and the worst seen while it ran.
+    trigger_temperature_c: Mapped[float] = mapped_column(Float)
+    peak_temperature_c: Mapped[float] = mapped_column(Float)
+    threshold_c: Mapped[float] = mapped_column(Float)
+    sensor_kind: Mapped[str] = mapped_column(String(16), default="hardware")
+    notified: Mapped[bool] = mapped_column(Boolean, default=False)
+    notify_error: Mapped[str] = mapped_column(String(512), default="")
+
+    user: Mapped[User] = relationship(back_populates="events")
 
 
 class Threshold(Base):
@@ -220,9 +338,53 @@ def configure(url: str) -> None:
     _SessionFactory = sessionmaker(bind=_engine, expire_on_commit=False, future=True)
 
 
+#: Columns added after the first release. ``create_all`` only creates missing
+#: *tables* — it will not touch a table that already exists, so upgrading an
+#: existing database needs an explicit ALTER. This project is small enough that
+#: a full migration tool (Alembic) would be more machinery than the problem
+#: deserves; a declared list of additive, nullable columns covers every schema
+#: change made so far and fails loudly if one ever isn't additive.
+_ADDED_COLUMNS: dict[str, dict[str, str]] = {
+    "devices": {
+        "kind": "VARCHAR(16) DEFAULT 'hardware'",
+        "owner_id": "INTEGER",
+    },
+    "readings": {
+        "sensor_kind": "VARCHAR(16) DEFAULT 'hardware'",
+        "flame_ratio": "FLOAT",
+        "luminance": "FLOAT",
+        "haze_index": "FLOAT",
+        "flicker": "FLOAT",
+    },
+}
+
+
+def _migrate_added_columns() -> None:
+    """Add any missing columns to existing tables. Idempotent and additive.
+
+    Deliberately does not drop, rename or retype anything: those need real
+    migrations with real data handling, and silently doing them here would be
+    a good way to lose someone's history.
+    """
+    engine = get_engine()
+    inspector = sa_inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    with engine.begin() as connection:
+        for table, columns in _ADDED_COLUMNS.items():
+            if table not in existing_tables:
+                continue  # create_all just made it, with every column present
+            present = {column["name"] for column in inspector.get_columns(table)}
+            for name, ddl in columns.items():
+                if name in present:
+                    continue
+                logger.info("migrating: adding %s.%s", table, name)
+                connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+
+
 def init_db() -> None:
-    """Create tables and seed default thresholds. Idempotent."""
+    """Create tables, apply additive migrations, seed thresholds. Idempotent."""
     Base.metadata.create_all(get_engine())
+    _migrate_added_columns()
     with session_scope() as session:
         existing = {row.key for row in session.query(Threshold).all()}
         for key, value in DEFAULT_THRESHOLDS.items():

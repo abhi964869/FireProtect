@@ -37,9 +37,38 @@ class Settings(BaseSettings):
     mqtt_reconnect_max_s: float = 30.0
 
     # --- Database --------------------------------------------------------
+    #: SQLite by default so a fresh clone runs with nothing installed. Point it
+    #: at Supabase (or any Postgres) for persistence that survives a redeploy:
+    #: Render's filesystem is ephemeral, so on SQLite every restart wipes the
+    #: history, the accounts and the emergency contacts.
     database_url: str = f"sqlite:///{REPO_ROOT / 'backend' / 'fireprotect.db'}"
     #: Readings older than this are pruned by the retention job.
     retention_days: int = 30
+
+    @field_validator("database_url")
+    @classmethod
+    def _normalise_database_url(cls, value: str) -> str:
+        """Make the URL Supabase hands you actually work with SQLAlchemy 2.
+
+        Supabase's dashboard gives a `postgresql://...` (or, on older pages,
+        `postgres://...`) URI. SQLAlchemy resolves a bare `postgresql://` to
+        psycopg2, which is not installed here — this project uses psycopg 3 —
+        and rejects `postgres://` outright. Both produce an import error at
+        boot that reads like a missing dependency rather than a URL scheme
+        problem, so it is fixed here instead of in a troubleshooting doc.
+
+        Also forces TLS: Supabase accepts unencrypted connections, and a
+        database password crossing the public internet in the clear is not
+        something to leave to a default.
+        """
+        url = value.strip()
+        for prefix in ("postgres://", "postgresql://"):
+            if url.startswith(prefix):
+                url = "postgresql+psycopg://" + url[len(prefix) :]
+                break
+        if url.startswith("postgresql+psycopg://") and "sslmode=" not in url:
+            url += ("&" if "?" in url else "?") + "sslmode=require"
+        return url
 
     # --- Models ----------------------------------------------------------
     model_dir: Path = REPO_ROOT / "ml"
@@ -133,6 +162,52 @@ class Settings(BaseSettings):
                 return parsed
             return [item.strip() for item in text.split(",") if item.strip()]
         return value
+
+    # --- Accounts --------------------------------------------------------
+    #: HS256 signing key for session tokens. MUST be set in any deployment you
+    #: care about: when it is empty a random key is generated at boot, which
+    #: logs everyone out on every restart and breaks completely across more
+    #: than one instance. Empty is nonetheless the default, because a shipped
+    #: default secret is a forgeable-token vulnerability in every install.
+    jwt_secret: str = ""
+    jwt_ttl_hours: float = 24.0 * 14
+
+    #: Allow new accounts. Turn off once your users have signed up if the
+    #: deployment is public and you do not want strangers registering.
+    allow_registration: bool = True
+
+    # --- Emergency email -------------------------------------------------
+    #: Resend takes priority when both are set (see app/notify.py).
+    resend_api_key: str = ""
+
+    #: Gmail: smtp.gmail.com:587, username = your address, password = a 16
+    #: character Google App Password (NOT your account password - that will be
+    #: rejected, and you should never paste it into a server anyway).
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_use_starttls: bool = True
+    smtp_use_ssl: bool = False
+    smtp_timeout_s: float = 20.0
+
+    mail_from: str = ""
+    mail_from_name: str = "FireProtect"
+
+    #: Included as a link in the alert email. Set it to your deployed URL.
+    public_url: str = ""
+
+    #: Minimum gap between emergency emails for one account. Alerts are
+    #: re-evaluated every couple of seconds; without this, one fire would send
+    #: hundreds of messages and get the sender blocked as spam.
+    emergency_cooldown_s: float = 600.0
+
+    #: Fallback recipient for devices no account has claimed - an ESP32 that
+    #: reported before anyone registered, for instance. Empty means unowned
+    #: devices alarm on the dashboard but mail nobody, which is correct: there
+    #: is no defensible person to notify.
+    fallback_emergency_email: str = ""
+    fallback_temperature_limit_c: float = 55.0
 
     # --- Demo mode -------------------------------------------------------
     #: Generate telemetry in-process. A deployed instance has no ESP32 and

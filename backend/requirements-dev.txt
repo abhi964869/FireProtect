@@ -1,0 +1,11 @@
+-r requirements.txt
+
+pytest>=8.0
+pytest-asyncio>=0.23
+pytest-cov>=5.0
+ruff>=0.5
+mypy>=1.10
+
+# Pure-Python MQTT broker, used by backend/tests/test_e2e_mqtt.py so the
+# end-to-end pipeline can be tested without Docker or a Mosquitto binary.
+amqtt>=0.11
