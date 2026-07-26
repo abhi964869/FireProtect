@@ -1,0 +1,92 @@
+{
+  "decision_tree": {
+    "accuracy": 0.8399068548973948,
+    "macro_f1": 0.8654422925311493,
+    "per_class": {
+      "SAFE": {
+        "precision": 0.9434620753838995,
+        "recall": 0.8255293159609121,
+        "f1": 0.8805646036916395,
+        "support": 4912
+      },
+      "WARNING": {
+        "precision": 0.6177520071364853,
+        "recall": 0.8507371007371007,
+        "f1": 0.7157622739018088,
+        "support": 1628
+      },
+      "FIRE": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 331
+      }
+    },
+    "confusion_matrix": [
+      [
+        4055,
+        857,
+        0
+      ],
+      [
+        243,
+        1385,
+        0
+      ],
+      [
+        0,
+        0,
+        331
+      ]
+    ],
+    "report": "              precision    recall  f1-score   support\n\n        SAFE       0.94      0.83      0.88      4912\n     WARNING       0.62      0.85      0.72      1628\n        FIRE       1.00      1.00      1.00       331\n\n    accuracy                           0.84      6871\n   macro avg       0.85      0.89      0.87      6871\nweighted avg       0.87      0.84      0.85      6871\n"
+  },
+  "random_forest": {
+    "accuracy": 0.9120943094163877,
+    "macro_f1": 0.9184860613867842,
+    "per_class": {
+      "SAFE": {
+        "precision": 0.9456049638055842,
+        "recall": 0.9307817589576547,
+        "f1": 0.938134810710988,
+        "support": 4912
+      },
+      "WARNING": {
+        "precision": 0.8001172332942555,
+        "recall": 0.8384520884520884,
+        "f1": 0.8188362327534493,
+        "support": 1628
+      },
+      "FIRE": {
+        "precision": 1.0,
+        "recall": 0.9969788519637462,
+        "f1": 0.9984871406959153,
+        "support": 331
+      }
+    },
+    "confusion_matrix": [
+      [
+        4572,
+        340,
+        0
+      ],
+      [
+        263,
+        1365,
+        0
+      ],
+      [
+        0,
+        1,
+        330
+      ]
+    ],
+    "report": "              precision    recall  f1-score   support\n\n        SAFE       0.95      0.93      0.94      4912\n     WARNING       0.80      0.84      0.82      1628\n        FIRE       1.00      1.00      1.00       331\n\n    accuracy                           0.91      6871\n   macro avg       0.92      0.92      0.92      6871\nweighted avg       0.91      0.91      0.91      6871\n"
+  },
+  "parity": {
+    "compared": 6871,
+    "mismatches": 0,
+    "agreement": 1.0,
+    "method": "compiled-c"
+  }
+}

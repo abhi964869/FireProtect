@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "author": "FireProtect",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "board-esp32-devkit-c-v4",
+      "id": "esp",
+      "top": 0,
+      "left": 0,
+      "attrs": { "builder": "platformio" }
+    },
+    {
+      "type": "wokwi-dht22",
+      "id": "dht",
+      "top": -120,
+      "left": 210,
+      "attrs": { "temperature": "22", "humidity": "45" }
+    },
+    {
+      "type": "wokwi-gas-sensor",
+      "id": "mq2",
+      "top": 40,
+      "left": 250,
+      "attrs": { "label": "MQ-2 Smoke/Gas" }
+    },
+    {
+      "type": "wokwi-gas-sensor",
+      "id": "mq135",
+      "top": 190,
+      "left": 250,
+      "attrs": { "label": "MQ-135 Air Quality" }
+    },
+    {
+      "type": "wokwi-photoresistor-sensor",
+      "id": "flame",
+      "top": 340,
+      "left": 250,
+      "attrs": { "label": "IR Flame (photoresistor stand-in)" }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led-status",
+      "top": -60,
+      "left": -120,
+      "attrs": { "color": "red", "label": "STATUS" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r-led",
+      "top": -10,
+      "left": -120,
+      "attrs": { "value": "220" }
+    },
+    {
+      "type": "wokwi-buzzer",
+      "id": "buzzer",
+      "top": 120,
+      "left": -140,
+      "attrs": { "volume": "0.1" }
+    }
+  ],
+  "connections": [
+    ["esp:3V3", "dht:VCC", "red", ["v0"]],
+    ["esp:GND.1", "dht:GND", "black", ["v0"]],
+    ["esp:D4", "dht:SDA", "green", ["v0"]],
+
+    ["esp:3V3", "mq2:VCC", "red", ["v0"]],
+    ["esp:GND.1", "mq2:GND", "black", ["v0"]],
+    ["esp:D34", "mq2:AOUT", "yellow", ["v0"]],
+
+    ["esp:3V3", "mq135:VCC", "red", ["v0"]],
+    ["esp:GND.1", "mq135:GND", "black", ["v0"]],
+    ["esp:D35", "mq135:AOUT", "orange", ["v0"]],
+
+    ["esp:3V3", "flame:VCC", "red", ["v0"]],
+    ["esp:GND.1", "flame:GND", "black", ["v0"]],
+    ["esp:D32", "flame:AOUT", "blue", ["v0"]],
+    ["esp:D33", "flame:DOUT", "purple", ["v0"]],
+
+    ["esp:D2", "r-led:1", "green", ["v0"]],
+    ["r-led:2", "led-status:A", "green", ["v0"]],
+    ["led-status:C", "esp:GND.2", "black", ["v0"]],
+
+    ["esp:D26", "buzzer:1", "green", ["v0"]],
+    ["buzzer:2", "esp:GND.2", "black", ["v0"]]
+  ],
+  "dependencies": {}
+}

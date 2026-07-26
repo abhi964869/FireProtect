@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en" class="bg-canvas-night">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+    <meta name="theme-color" content="#000000" />
+    <meta
+      name="description"
+      content="FireProtect — real-time IoT fire detection. Live sensor telemetry, on-device and server-side classification, and instant alerting."
+    />
+    <!-- Only the hero is preloaded, and only the crop this viewport will
+         actually use — preloading both would download an image the browser
+         then discards. Every other backdrop is a CSS background below the
+         fold, so it is fetched lazily by the browser's own layout-driven
+         loading. First-load weight stays far under the 2 MB budget. -->
+    <link
+      rel="preload"
+      as="image"
+      href="/assets/hero-thermal-plume-desktop.webp"
+      media="(min-width: 768px)"
+    />
+    <link
+      rel="preload"
+      as="image"
+      href="/assets/hero-thermal-plume-mobile.webp"
+      media="(max-width: 767px)"
+    />
+    <title>FireProtect — Fire Detection Monitoring</title>
+  </head>
+  <body class="bg-canvas-night">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

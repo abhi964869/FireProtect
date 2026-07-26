@@ -1,0 +1,15 @@
+# Wokwi simulation config.
+#
+# Run in a browser with the Wokwi VS Code extension, or upload diagram.json at
+# https://wokwi.com/projects/new/esp32.
+#
+# Build first:  cd firmware && pio run -e wokwi
+# Then:         press F1 -> "Wokwi: Start Simulator"
+
+[wokwi]
+version = 1
+firmware = ".pio/build/wokwi/firmware.bin"
+elf = ".pio/build/wokwi/firmware.elf"
+
+# Wokwi provides an open network named "Wokwi-GUEST" with internet access, so
+# the simulated device can reach a public MQTT broker without credentials.

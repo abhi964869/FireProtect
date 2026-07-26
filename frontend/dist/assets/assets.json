@@ -1,0 +1,162 @@
+[
+  {
+    "filename": "backdrop-circuit-trace-desktop.webp",
+    "purpose": "Threshold config section backdrop",
+    "usedIn": "Threshold configuration panel",
+    "dimensions": "2560x1440",
+    "sizeBytes": 50128,
+    "contrast": "PASS - white on brightest region = 20.62:1 (AA body needs 4.5:1)"
+  },
+  {
+    "filename": "backdrop-circuit-trace-mobile.webp",
+    "purpose": "Threshold config backdrop, mobile crop",
+    "usedIn": "Threshold configuration panel below 768px",
+    "dimensions": "1280x720",
+    "sizeBytes": 33816,
+    "contrast": "PASS - white on brightest region = 20.25:1 (AA body needs 4.5:1)"
+  },
+  {
+    "filename": "backdrop-sensor-mesh-desktop.webp",
+    "purpose": "Section backdrop",
+    "usedIn": "Device grid section",
+    "dimensions": "2560x1440",
+    "sizeBytes": 16538,
+    "contrast": "PASS - white on brightest region = 20.87:1 (AA body needs 4.5:1)"
+  },
+  {
+    "filename": "backdrop-sensor-mesh-mobile.webp",
+    "purpose": "Section backdrop, mobile crop",
+    "usedIn": "Device grid section below 768px",
+    "dimensions": "1280x720",
+    "sizeBytes": 7914,
+    "contrast": "PASS - white on brightest region = 20.50:1 (AA body needs 4.5:1)"
+  },
+  {
+    "filename": "empty-state-no-alerts.webp",
+    "purpose": "Empty state illustration",
+    "usedIn": "Alert history when no alerts exist",
+    "dimensions": "1200x800",
+    "sizeBytes": 4430,
+    "contrast": "PASS - white on brightest region = 19.43:1 (AA body needs 4.5:1)"
+  },
+  {
+    "filename": "empty-state-no-devices.webp",
+    "purpose": "Empty state illustration",
+    "usedIn": "Device list when no devices have reported",
+    "dimensions": "1200x800",
+    "sizeBytes": 11452,
+    "contrast": "PASS - white on brightest region = 19.44:1 (AA body needs 4.5:1)"
+  },
+  {
+    "filename": "favicon.svg",
+    "purpose": "Favicon / app icon",
+    "usedIn": "index.html",
+    "dimensions": "vector",
+    "sizeBytes": 426,
+    "contrast": "N/A - vector, inherits currentColor from the token palette"
+  },
+  {
+    "filename": "hero-thermal-plume-desktop.webp",
+    "purpose": "Primary hero backdrop",
+    "usedIn": "Dashboard hero band (`AppShell`)",
+    "dimensions": "2560x1440",
+    "sizeBytes": 16176,
+    "contrast": "PASS - white on brightest region = 5.47:1 (AA body needs 4.5:1); graded 1 pass(es) darker to comply"
+  },
+  {
+    "filename": "hero-thermal-plume-mobile.webp",
+    "purpose": "Hero backdrop, mobile art-direction crop",
+    "usedIn": "Dashboard hero band below 768px",
+    "dimensions": "1280x720",
+    "sizeBytes": 4828,
+    "contrast": "PASS - white on brightest region = 5.64:1 (AA body needs 4.5:1); graded 2 pass(es) darker to comply"
+  },
+  {
+    "filename": "icon-air-quality.svg",
+    "purpose": "UI icon",
+    "usedIn": "Sensor cards, device status, alerts",
+    "dimensions": "vector",
+    "sizeBytes": 375,
+    "contrast": "N/A - vector, inherits currentColor from the token palette"
+  },
+  {
+    "filename": "icon-alert.svg",
+    "purpose": "UI icon",
+    "usedIn": "Sensor cards, device status, alerts",
+    "dimensions": "vector",
+    "sizeBytes": 324,
+    "contrast": "N/A - vector, inherits currentColor from the token palette"
+  },
+  {
+    "filename": "icon-device.svg",
+    "purpose": "UI icon",
+    "usedIn": "Sensor cards, device status, alerts",
+    "dimensions": "vector",
+    "sizeBytes": 372,
+    "contrast": "N/A - vector, inherits currentColor from the token palette"
+  },
+  {
+    "filename": "icon-flame.svg",
+    "purpose": "UI icon",
+    "usedIn": "Sensor cards, device status, alerts",
+    "dimensions": "vector",
+    "sizeBytes": 371,
+    "contrast": "N/A - vector, inherits currentColor from the token palette"
+  },
+  {
+    "filename": "icon-humidity.svg",
+    "purpose": "UI icon",
+    "usedIn": "Sensor cards, device status, alerts",
+    "dimensions": "vector",
+    "sizeBytes": 301,
+    "contrast": "N/A - vector, inherits currentColor from the token palette"
+  },
+  {
+    "filename": "icon-shield.svg",
+    "purpose": "UI icon",
+    "usedIn": "Sensor cards, device status, alerts",
+    "dimensions": "vector",
+    "sizeBytes": 360,
+    "contrast": "N/A - vector, inherits currentColor from the token palette"
+  },
+  {
+    "filename": "icon-smoke.svg",
+    "purpose": "UI icon",
+    "usedIn": "Sensor cards, device status, alerts",
+    "dimensions": "vector",
+    "sizeBytes": 350,
+    "contrast": "N/A - vector, inherits currentColor from the token palette"
+  },
+  {
+    "filename": "icon-temperature.svg",
+    "purpose": "UI icon",
+    "usedIn": "Sensor cards, device status, alerts",
+    "dimensions": "vector",
+    "sizeBytes": 367,
+    "contrast": "N/A - vector, inherits currentColor from the token palette"
+  },
+  {
+    "filename": "logo-fireprotect.svg",
+    "purpose": "Wordmark",
+    "usedIn": "Top navigation bar",
+    "dimensions": "vector",
+    "sizeBytes": 673,
+    "contrast": "N/A - vector, inherits currentColor from the token palette"
+  },
+  {
+    "filename": "texture-ember-drift-desktop.webp",
+    "purpose": "Alert section backdrop",
+    "usedIn": "Alert history section",
+    "dimensions": "2560x1440",
+    "sizeBytes": 50502,
+    "contrast": "PASS - white on brightest region = 13.23:1 (AA body needs 4.5:1)"
+  },
+  {
+    "filename": "texture-ember-drift-mobile.webp",
+    "purpose": "Alert section backdrop, mobile crop",
+    "usedIn": "Alert history section below 768px",
+    "dimensions": "1280x720",
+    "sizeBytes": 38202,
+    "contrast": "PASS - white on brightest region = 11.70:1 (AA body needs 4.5:1)"
+  }
+]

@@ -1,0 +1,11 @@
+[
+  "temperature_c",
+  "humidity_pct",
+  "smoke_ppm",
+  "air_quality_ppm",
+  "flame_analog_volts",
+  "flame_detected",
+  "temp_rate_c_per_min",
+  "smoke_rate_ppm_per_min",
+  "heat_index_c"
+]
