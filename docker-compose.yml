@@ -1,0 +1,115 @@
+# FireProtect — full stack.
+#
+#   docker compose up --build
+#
+# Brings up, in order:
+#   mosquitto  — MQTT broker on 1883 (anonymous, LAN-only)
+#   backend    — FastAPI + MQTT subscriber + SQLite on 8000
+#   frontend   — nginx serving the built dashboard on 5173
+#   simulator  — a virtual ESP32 publishing telemetry (profile: demo)
+#
+# The simulator is behind a profile so a real-hardware deployment does not get
+# a phantom device. Start it with:  docker compose --profile demo up
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: fireprotect-mosquitto
+    restart: unless-stopped
+    ports:
+      - '1883:1883'
+      - '9001:9001'
+    volumes:
+      - ./mosquitto/config:/mosquitto/config:ro
+      - mosquitto-data:/mosquitto/data
+      - mosquitto-log:/mosquitto/log
+    healthcheck:
+      # `mosquitto_sub -E` connects, subscribes, then exits immediately, so it
+      # proves the broker is actually accepting sessions rather than just
+      # holding an open port.
+      test: ['CMD-SHELL', 'mosquitto_sub -h localhost -t healthcheck -E -W 3 || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: fireprotect-backend
+    restart: unless-stopped
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    ports:
+      - '8000:8000'
+    environment:
+      MQTT_HOST: mosquitto
+      MQTT_PORT: '1883'
+      # Inside a container loopback is not reachable from the host, so the
+      # published port would be dead. Safe here: only 8000 is published, and
+      # the container has no other route in.
+      API_HOST: 0.0.0.0
+      DATABASE_URL: sqlite:////data/fireprotect.db
+      MODEL_DIR: /app/ml
+      THINGSPEAK_ENABLED: ${THINGSPEAK_ENABLED:-false}
+      THINGSPEAK_WRITE_API_KEY: ${THINGSPEAK_WRITE_API_KEY:-}
+      THINGSPEAK_BUFFER_PATH: /data/thingspeak_buffer.jsonl
+    volumes:
+      - backend-data:/data
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen(''http://localhost:8000/api/health'', timeout=3).status==200 else 1)"',
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: fireprotect-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - '5173:80'
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q --spider http://localhost/ || exit 1']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  simulator:
+    build:
+      context: .
+      dockerfile: simulator/Dockerfile
+    container_name: fireprotect-simulator
+    restart: unless-stopped
+    profiles: ['demo']
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    environment:
+      SIM_SCENARIO: ${SIM_SCENARIO:-normal}
+      SIM_DEVICE_ID: ${SIM_DEVICE_ID:-esp32-sim-01}
+      SIM_LOCATION: ${SIM_LOCATION:-Simulated Room}
+    command: >
+      python simulator/virtual_device.py
+      --host mosquitto
+      --port 1883
+      --scenario ${SIM_SCENARIO:-normal}
+      --device-id ${SIM_DEVICE_ID:-esp32-sim-01}
+      --location "${SIM_LOCATION:-Simulated Room}"
+
+volumes:
+  mosquitto-data:
+  mosquitto-log:
+  backend-data:
