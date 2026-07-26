@@ -126,6 +126,19 @@ class Reading(Base):
     haze_index: Mapped[float | None] = mapped_column(Float, nullable=True)
     flicker: Mapped[float | None] = mapped_column(Float, nullable=True)
 
+    # --- outdoor air quality, from monitoring stations near the device -----
+    # Real measurements, but of *outdoor* air at the device's approximate
+    # location — not of the room. Kept in their own columns rather than folded
+    # into smoke_ppm/air_quality_ppm precisely so the two can never be
+    # confused: an MQ-2 smells the room, this is a public monitoring network.
+    #
+    # PM2.5 is included because it is the honest real-world analogue of
+    # "smoke": it is airborne particulate in µg/m³, and it is what rises during
+    # a wildfire. It is not a substitute for an in-room detector.
+    pm2_5_ugm3: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pm10_ugm3: Mapped[float | None] = mapped_column(Float, nullable=True)
+    us_aqi: Mapped[float | None] = mapped_column(Float, nullable=True)
+
     temp_rate_c_per_min: Mapped[float] = mapped_column(Float, default=0.0)
     smoke_rate_ppm_per_min: Mapped[float] = mapped_column(Float, default=0.0)
     heat_index_c: Mapped[float] = mapped_column(Float, default=0.0)
@@ -355,6 +368,9 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "luminance": "FLOAT",
         "haze_index": "FLOAT",
         "flicker": "FLOAT",
+        "pm2_5_ugm3": "FLOAT",
+        "pm10_ugm3": "FLOAT",
+        "us_aqi": "FLOAT",
     },
 }
 

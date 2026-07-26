@@ -421,6 +421,9 @@ class IngestService:
             luminance=evidence.luminance,
             haze_index=evidence.haze_index,
             flicker=evidence.flicker,
+            pm2_5_ugm3=telemetry.pm2_5_ugm3,
+            pm10_ugm3=telemetry.pm10_ugm3,
+            us_aqi=telemetry.us_aqi,
             heat_index_c=(
                 round(
                     compute_heat_index(telemetry.temperature_c, telemetry.humidity_pct),
@@ -652,11 +655,27 @@ def _alert_message(
     return f"{prefix}: {detail} (P(fire)={reading.fire_probability:.2f})"
 
 
+def _iso(value: datetime | None) -> str | None:
+    """ISO-8601 with an explicit UTC offset, always.
+
+    The WebSocket payloads are hand-built dicts and never touch Pydantic, so
+    they do not get ``UtcDatetime`` coercion for free. Without this a live
+    reading pushed over the socket carries a naive timestamp while the same
+    reading fetched over REST carries an aware one — and the chart would jump
+    by the viewer's UTC offset the moment the socket delivered an update.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.isoformat()
+
+
 def _reading_to_dict(reading: Reading) -> dict[str, Any]:
     return {
         "id": reading.id,
         "device_id": reading.device_id,
-        "recorded_at": reading.recorded_at.isoformat(),
+        "recorded_at": _iso(reading.recorded_at),
         "sensor_kind": reading.sensor_kind,
         "temperature_c": reading.temperature_c,
         "humidity_pct": reading.humidity_pct,
@@ -668,6 +687,9 @@ def _reading_to_dict(reading: Reading) -> dict[str, Any]:
         "luminance": reading.luminance,
         "haze_index": reading.haze_index,
         "flicker": reading.flicker,
+        "pm2_5_ugm3": reading.pm2_5_ugm3,
+        "pm10_ugm3": reading.pm10_ugm3,
+        "us_aqi": reading.us_aqi,
         "temp_rate_c_per_min": reading.temp_rate_c_per_min,
         "smoke_rate_ppm_per_min": reading.smoke_rate_ppm_per_min,
         "heat_index_c": reading.heat_index_c,
@@ -684,8 +706,8 @@ def _alert_to_dict(alert: Alert) -> dict[str, Any]:
         "device_id": alert.device_id,
         "severity": alert.severity,
         "message": alert.message,
-        "triggered_at": alert.triggered_at.isoformat(),
-        "resolved_at": alert.resolved_at.isoformat() if alert.resolved_at else None,
+        "triggered_at": _iso(alert.triggered_at),
+        "resolved_at": _iso(alert.resolved_at),
         "acknowledged": alert.acknowledged,
         "temperature_c": alert.temperature_c,
         "smoke_ppm": alert.smoke_ppm,
@@ -700,8 +722,8 @@ def _device_to_dict(device: Device) -> dict[str, Any]:
         "location": device.location,
         "kind": device.kind,
         "firmware_version": device.firmware_version,
-        "first_seen": device.first_seen.isoformat(),
-        "last_seen": device.last_seen.isoformat(),
+        "first_seen": _iso(device.first_seen),
+        "last_seen": _iso(device.last_seen),
         "online": device.online,
     }
 

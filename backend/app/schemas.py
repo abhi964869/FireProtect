@@ -3,10 +3,36 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
+
+
+def _ensure_utc(value: object) -> object:
+    """Attach UTC to a naive datetime on its way out of the API.
+
+    Every timestamp in this system is UTC — ``db.utcnow()`` guarantees it. But
+    ``DateTime(timezone=True)`` is a no-op on SQLite: the column has no offset,
+    so SQLAlchemy reads back a *naive* datetime and ``isoformat()`` emits
+    ``2026-07-26T18:17:42`` with nothing to say which zone that is.
+
+    JavaScript then applies ECMA-262's rule for date-time forms with no offset
+    and treats it as **local time**. For a reader in IST that silently shifts
+    every timestamp 5.5 hours into the past: a device that reported two seconds
+    ago renders as "seen 6h ago", and the telemetry charts plot against a
+    time axis that is wrong by the reader's UTC offset.
+
+    Stamping the offset here fixes it for every consumer at once, and is
+    correct on Postgres too, where the value already arrives aware.
+    """
+    if isinstance(value, datetime) and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+#: A datetime that is always serialised with an explicit UTC offset.
+UtcDatetime = Annotated[datetime, BeforeValidator(_ensure_utc)]
 
 FireStatus = Literal["SAFE", "WARNING", "FIRE"]
 
@@ -130,9 +156,26 @@ class CameraTelemetryIn(BaseModel):
 
     #: Genuine ambient conditions from the visitor's location, when they allow
     #: it. Optional and nullable: absent means "unknown", never "zero".
+    #:
+    #: These are real measurements from public weather and air-quality
+    #: monitoring networks, not readings from the phone — no phone has a
+    #: hygrometer or a particulate sensor. They describe OUTDOOR air near the
+    #: device, which is why they are carried in their own fields and labelled
+    #: as such everywhere they are shown.
     temperature_c: float | None = None
     humidity_pct: float | None = None
+    pm2_5_ugm3: Annotated[float | None, Field(ge=0.0, le=2000.0)] = None
+    pm10_ugm3: Annotated[float | None, Field(ge=0.0, le=5000.0)] = None
+    us_aqi: Annotated[float | None, Field(ge=0.0, le=1000.0)] = None
     location: str = ""
+
+    @field_validator("pm2_5_ugm3", "pm10_ugm3", "us_aqi")
+    @classmethod
+    def _optional_air(cls, value: float | None, info: object) -> float | None:
+        if value is None:
+            return None
+        name = getattr(info, "field_name", "value")
+        return _reject_non_finite(value, str(name))
 
     @field_validator("flame_ratio", "luminance", "haze_index")
     @classmethod
@@ -168,7 +211,7 @@ class ReadingOut(BaseModel):
 
     id: int
     device_id: str
-    recorded_at: datetime
+    recorded_at: UtcDatetime
     #: Which sensor family produced this row. Consumers must branch on it
     #: before interpreting any channel below.
     sensor_kind: SensorKind = "hardware"
@@ -187,6 +230,11 @@ class ReadingOut(BaseModel):
     haze_index: float | None = None
     flicker: float | None = None
 
+    # Outdoor air near the device, from public monitoring networks.
+    pm2_5_ugm3: float | None = None
+    pm10_ugm3: float | None = None
+    us_aqi: float | None = None
+
     temp_rate_c_per_min: float = 0.0
     smoke_rate_ppm_per_min: float = 0.0
     heat_index_c: float = 0.0
@@ -204,8 +252,8 @@ class DeviceOut(BaseModel):
     location: str
     kind: SensorKind = "hardware"
     firmware_version: str
-    first_seen: datetime
-    last_seen: datetime
+    first_seen: UtcDatetime
+    last_seen: UtcDatetime
     online: bool
 
 
@@ -221,8 +269,8 @@ class AlertOut(BaseModel):
     device_id: str
     severity: FireStatus
     message: str
-    triggered_at: datetime
-    resolved_at: datetime | None
+    triggered_at: UtcDatetime
+    resolved_at: UtcDatetime | None
     acknowledged: bool
     temperature_c: float
     smoke_ppm: float
@@ -234,7 +282,7 @@ class ThresholdOut(BaseModel):
 
     key: str
     value: float
-    updated_at: datetime
+    updated_at: UtcDatetime
 
 
 class ThresholdUpdate(BaseModel):
@@ -299,7 +347,7 @@ class UserOut(BaseModel):
     id: int
     email: str
     display_name: str
-    created_at: datetime
+    created_at: UtcDatetime
     emergency_email: str
     emergency_name: str
     temperature_limit_c: float
@@ -343,8 +391,8 @@ class TemperatureEventOut(BaseModel):
 
     id: int
     device_id: str
-    started_at: datetime
-    ended_at: datetime | None
+    started_at: UtcDatetime
+    ended_at: UtcDatetime | None
     trigger_temperature_c: float
     peak_temperature_c: float
     threshold_c: float
