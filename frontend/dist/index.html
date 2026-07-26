@@ -27,10 +27,74 @@
       media="(max-width: 767px)"
     />
     <title>FireProtect — Fire Detection Monitoring</title>
-    <script type="module" crossorigin src="/assets/index-Blt39m7C.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-34oBQuWl.css">
+
+    <!--
+      Boot failsafe.
+
+      If the JavaScript bundle fails to load - a missing file, a broken deploy,
+      a blocked script - React never mounts and #root stays empty. The result is
+      a blank white page that tells the user nothing and the developer nothing.
+
+      `#root:empty` is true only until React renders. So this fallback is shown
+      by default and disappears the instant the app mounts, with no JavaScript
+      of its own and nothing to go wrong. It is deliberately inline and
+      unstyled-by-Tailwind: the stylesheet is one of the things that might have
+      failed to load, so this cannot depend on it.
+    -->
+    <style>
+      #boot-fallback {
+        display: none;
+      }
+      #root:empty ~ #boot-fallback {
+        display: block;
+        max-width: 34rem;
+        margin: 12vh auto;
+        padding: 0 1.5rem;
+        color: #f0f0fa;
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        line-height: 1.6;
+      }
+      #boot-fallback h1 {
+        font-size: 1.6rem;
+        margin: 0 0 0.75rem;
+        color: #fff;
+      }
+      #boot-fallback a {
+        color: #fff;
+      }
+      #boot-fallback code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.9em;
+      }
+    </style>
+    <script type="module" crossorigin src="/assets/app.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/app.css">
   </head>
   <body class="bg-canvas-night">
     <div id="root"></div>
+
+    <div id="boot-fallback">
+      <h1>The dashboard didn’t load</h1>
+      <p>
+        The page reached the server, but the application code did not start.
+        That usually means a script file is missing from this deployment.
+      </p>
+      <p>
+        The backend itself may be perfectly healthy — check
+        <a href="/api/health">/api/health</a>. If that returns
+        <code>"status":"ok"</code>, only the dashboard build is at fault.
+      </p>
+      <p>
+        Try a hard refresh first (<code>Ctrl</code>+<code>Shift</code>+<code>R</code>,
+        or <code>Cmd</code>+<code>Shift</code>+<code>R</code>). If it persists,
+        open your browser’s developer console — a red 404 there names the file
+        that is missing.
+      </p>
+      <noscript>
+        <p><strong>JavaScript is disabled.</strong> This dashboard streams live
+        sensor data and needs it enabled.</p>
+      </noscript>
+    </div>
+
   </body>
 </html>
