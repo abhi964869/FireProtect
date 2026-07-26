@@ -34,8 +34,15 @@ COPY ml/random_forest.joblib ml/decision_tree.joblib ml/feature_columns.json ./m
 COPY frontend/dist ./frontend/dist
 
 # Demo mode imports the simulator's physics rather than duplicating it, so the
-# module has to be in the image. It is small and has no dependencies.
+# module has to be in the image.
+#
+# generate_dataset.py comes with it: virtual_device.py imports the MQ sensor
+# curves and heat-index maths from it (see its `sys.path.insert` near the top)
+# rather than keeping a second copy that could drift. Shipping the simulator
+# without it means the import fails at boot and DEMO_MODE silently produces
+# nothing — which is exactly what happened on the first deploy that enabled it.
 COPY simulator/virtual_device.py ./simulator/virtual_device.py
+COPY ml/generate_dataset.py ./ml/generate_dataset.py
 
 # Data lives on a mounted volume where the platform provides one; otherwise it
 # is ephemeral and resets on redeploy, which is fine for a demo.
