@@ -1,0 +1,17 @@
+# FireProtect backend runtime dependencies.
+# Dev/test extras live in requirements-dev.txt.
+
+fastapi>=0.111,<1.0
+uvicorn[standard]>=0.30,<1.0
+pydantic>=2.7,<3.0
+pydantic-settings>=2.3,<3.0
+SQLAlchemy>=2.0,<3.0
+paho-mqtt>=2.0,<3.0
+httpx>=0.27,<1.0
+
+# Inference. scikit-learn must match the version the model was trained with;
+# joblib artefacts are not guaranteed portable across minor versions.
+scikit-learn>=1.5,<2.0
+joblib>=1.4,<2.0
+numpy>=1.26,<3.0
+pandas>=2.2,<3.0
