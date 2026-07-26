@@ -9,9 +9,24 @@ SQLAlchemy>=2.0,<3.0
 paho-mqtt>=2.0,<3.0
 httpx>=0.27,<1.0
 
-# Inference. scikit-learn must match the version the model was trained with;
-# joblib artefacts are not guaranteed portable across minor versions.
-scikit-learn>=1.5,<2.0
+# Postgres driver, for pointing DATABASE_URL at Supabase. psycopg 3 (not
+# psycopg2): the binary wheel needs no libpq or compiler on the build host.
+# Unused on the SQLite default, and small enough not to be worth making
+# optional.
+psycopg[binary]>=3.1,<4.0
+
+# Accounts. bcrypt for password hashing, PyJWT for session tokens.
+bcrypt>=4.1,<5.0
+PyJWT>=2.8,<3.0
+
+# Inference. Pinned to the minor version the models were TRAINED with, not a
+# broad range. joblib artefacts are not portable across scikit-learn minor
+# versions: loading a 1.7 forest under 1.9 raises InconsistentVersionWarning
+# and, in scikit-learn's own words, "might lead to breaking code or invalid
+# results". For a fire detector, "invalid results" is not an acceptable risk to
+# carry for the sake of a looser pin. Retrain with `python ml/train.py` before
+# widening this.
+scikit-learn>=1.7.2,<1.8
 joblib>=1.4,<2.0
 numpy>=1.26,<3.0
 pandas>=2.2,<3.0
