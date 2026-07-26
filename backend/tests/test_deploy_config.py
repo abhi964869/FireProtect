@@ -6,6 +6,8 @@ is exactly where a mistake is most expensive to discover.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from app.config import Settings
@@ -115,3 +117,117 @@ def test_committed_dashboard_build_exists():
     index = REPO_ROOT / "frontend" / "dist" / "index.html"
     assert index.is_file(), "run `npm run build` in frontend/ and commit dist/"
     assert "<div id=\"root\">" in index.read_text(encoding="utf-8")
+
+
+def test_dashboard_references_only_files_that_exist():
+    """Every asset index.html asks for must actually be in dist/.
+
+    Regression test for a live blank-white-page outage. `index.html` pointed at
+    a content-hashed bundle that had not been uploaded, so the browser 404'd on
+    the script and rendered nothing at all. Assets now have stable names, but
+    the invariant worth enforcing is the general one: the entry document must
+    never reference a file the deployment does not contain.
+    """
+    from app.config import REPO_ROOT
+
+    dist = REPO_ROOT / "frontend" / "dist"
+    html = (dist / "index.html").read_text(encoding="utf-8")
+    referenced = set(re.findall(r'(?:src|href)="(/assets/[^"]+)"', html))
+    assert referenced, "index.html references no assets at all - build is broken"
+
+    missing = [ref for ref in referenced if not (dist / ref.lstrip("/")).is_file()]
+    assert not missing, f"index.html references files missing from dist/: {missing}"
+
+
+def test_dashboard_has_a_visible_failure_mode():
+    """A broken deploy must say so, not render a blank white page.
+
+    The fallback is CSS-only (`#root:empty`) precisely so it still works when
+    the stylesheet or the bundle is the thing that failed.
+    """
+    from app.config import REPO_ROOT
+
+    html = (REPO_ROOT / "frontend" / "dist" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    assert "boot-fallback" in html
+    assert "#root:empty" in html
+
+
+# --------------------------------------------------------------------------
+# Container contents — what the Dockerfile must ship for the app to work
+# --------------------------------------------------------------------------
+
+
+def _dockerfile() -> str:
+    from app.config import REPO_ROOT
+
+    return (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "required",
+    [
+        "backend/requirements.txt",
+        "backend/app",
+        "ml/random_forest.joblib",
+        "ml/decision_tree.joblib",
+        "ml/feature_columns.json",
+        "frontend/dist",
+        # Demo mode imports the simulator, which in turn imports the dataset
+        # module for its sensor curves. Omitting either makes DEMO_MODE fail
+        # silently at boot and leaves every visitor looking at an empty
+        # dashboard -- which is exactly what shipped once.
+        "simulator/virtual_device.py",
+        "ml/generate_dataset.py",
+    ],
+)
+def test_dockerfile_copies_every_runtime_dependency(required: str):
+    assert required in _dockerfile(), (
+        f"Dockerfile does not COPY {required}; the container will be missing it"
+    )
+
+
+def test_simulator_import_chain_is_satisfiable():
+    """Assert the *reason* generate_dataset.py must ship, not just that it does.
+
+    If virtual_device.py ever stops importing from ml/, this test still passes
+    -- but if it starts importing something new, this is where that shows up.
+    """
+    from app.config import REPO_ROOT
+
+    source = (REPO_ROOT / "simulator" / "virtual_device.py").read_text(
+        encoding="utf-8"
+    )
+    dockerfile = _dockerfile()
+    for module in re.findall(r"^from (\w+) import", source, re.M):
+        candidate = REPO_ROOT / "ml" / f"{module}.py"
+        if candidate.is_file():
+            assert f"ml/{module}.py" in dockerfile, (
+                f"virtual_device.py imports ml/{module}.py but the Dockerfile "
+                f"does not copy it"
+            )
+
+
+def test_sklearn_pin_matches_the_trained_models():
+    """joblib artefacts are not portable across scikit-learn minor versions.
+
+    A loose pin let the container install 1.9 for models fitted under 1.7,
+    which scikit-learn warns "might lead to breaking code or invalid results".
+    """
+    from app.config import REPO_ROOT
+
+    requirements = (REPO_ROOT / "backend" / "requirements.txt").read_text(
+        encoding="utf-8"
+    )
+    line = next(
+        row for row in requirements.splitlines() if row.startswith("scikit-learn")
+    )
+    import sklearn
+
+    major, minor, *_ = sklearn.__version__.split(".")
+    assert f"<{major}.{int(minor) + 1}" in line, (
+        f"scikit-learn is pinned as {line!r}, which permits a minor version "
+        f"other than the installed {sklearn.__version__} the models were "
+        f"trained with"
+    )
